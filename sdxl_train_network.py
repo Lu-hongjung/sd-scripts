@@ -175,8 +175,8 @@ def setup_parser() -> argparse.ArgumentParser:
 
 if __name__ == "__main__":
     parser = setup_parser()
-
     args = parser.parse_args()
+    print(args.network_args)
     args = train_util.read_config_from_file(args, parser)
 
     trainer = SdxlNetworkTrainer()

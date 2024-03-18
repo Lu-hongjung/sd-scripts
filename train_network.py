@@ -9,6 +9,9 @@ import time
 import json
 from multiprocessing import Value
 import toml
+import csv 
+import numpy as np
+from datetime import datetime
 
 from tqdm import tqdm
 import torch
@@ -705,6 +708,9 @@ class NetworkTrainer:
 
         loss_list = []
         loss_total = 0.0
+        output_lost_list = []
+        output_loss_total = 0.0
+#        output_gradient_total = np.array([None])
         del train_dataset_group
 
         # callback for step start
@@ -745,7 +751,6 @@ class NetworkTrainer:
             metadata["ss_epoch"] = str(epoch + 1)
 
             network.on_epoch_start(text_encoder, unet)
-
             for step, batch in enumerate(train_dataloader):
                 current_step.value = global_step
                 with accelerator.accumulate(network):
@@ -780,7 +785,6 @@ class NetworkTrainer:
                             text_encoder_conds = self.get_text_cond(
                                 args, accelerator, batch, tokenizers, text_encoders, weight_dtype
                             )
-
                     # Sample noise, sample a random timestep for each image, and add noise to the latents,
                     # with noise offset and/or multires noise if specified
                     noise, noisy_latents, timesteps = train_util.get_noise_noisy_latents_and_timesteps(
@@ -852,7 +856,7 @@ class NetworkTrainer:
                             if remove_step_no is not None:
                                 remove_ckpt_name = train_util.get_step_ckpt_name(args, "." + args.save_model_as, remove_step_no)
                                 remove_model(remove_ckpt_name)
-
+                
                 current_loss = loss.detach().item()
                 if epoch == 0:
                     loss_list.append(current_loss)
@@ -860,9 +864,32 @@ class NetworkTrainer:
                     loss_total -= loss_list[step]
                     loss_list[step] = current_loss
                 loss_total += current_loss
+                ##Loss出力
+                output_lost_list.append(current_loss)
+                output_loss_total += current_loss
                 avr_loss = loss_total / len(loss_list)
                 logs = {"loss": avr_loss}  # , "lr": lr_scheduler.get_last_lr()[0]}
                 progress_bar.set_postfix(**logs)
+                
+                ## Loss Log 機能追加
+                if not os.path.exists(args.output_dir):
+                    os.makedirs(args.output_dir)
+                # 指定したフォーマットで文字列に変換
+                if args.output_loss_n_steps!=None and len(output_lost_list)%args.output_loss_n_steps==0:
+                    # 現在の時間を取得
+                    current_time = datetime.now()
+                    formatted_time = current_time.strftime("%Y-%m-%d %H:%M:%S")
+                    #平均Loss計算
+                    avg_loss = output_loss_total / len(output_lost_list)
+                    #Loss書き出す
+                    with open(os.path.join(args.output_dir,'log.csv'), 'a', newline='') as file:
+                        writer = csv.writer(file)
+                        new_lod_data = [formatted_time,f'step={global_step}',f'loss={avg_loss}']
+                        writer.writerow(new_lod_data)
+                        file.close()
+                    #Lossリセット
+                    output_lost_list=[]
+                    output_loss_total=0.0
 
                 if args.scale_weight_norms:
                     progress_bar.set_postfix(**{**max_mean_logs, **logs})
@@ -877,6 +904,25 @@ class NetworkTrainer:
             if args.logging_dir is not None:
                 logs = {"loss/epoch": loss_total / len(loss_list)}
                 accelerator.log(logs, step=epoch + 1)
+
+            if not os.path.exists(args.output_dir):
+                os.makedirs(args.output_dir)
+
+            ## Loss Log 機能追加
+            if args.output_loss_n_steps==None and (epoch+1)%args.output_loss_n_epochs==0 :
+                # 現在の時間を取得
+                current_time = datetime.now()
+                # 指定したフォーマットで文字列に変換
+                formatted_time = current_time.strftime("%Y-%m-%d %H:%M:%S")
+                avg_loss = output_loss_total / len(output_lost_list)
+                with open(os.path.join(args.output_dir,'log.csv'), 'a', newline='') as file:
+                    writer = csv.writer(file)
+                    new_lod_data = [formatted_time,f'epoch={epoch+1}',f'loss={avg_loss}']
+                    writer.writerow(new_lod_data)
+                    file.close()
+                #Lossリセット
+                output_lost_list=[]
+                output_loss_total=0.0
 
             accelerator.wait_for_everyone()
 
@@ -996,12 +1042,24 @@ def setup_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="do not use fp16/bf16 VAE in mixed precision (use float VAE) / mixed precisionでも fp16/bf16 VAEを使わずfloat VAEを使う",
     )
+    parser.add_argument(
+        "--output_loss_n_steps",
+        type=int,
+        default=None,
+        help="per step of output Loss / 学習Loss出力Step周期設定。(epochと同時設定する場合、stepsの設定が優先)",
+    )
+
+    parser.add_argument(
+        "--output_loss_n_epochs",
+        type=int,
+        default=1,
+        help="per Epoch of output Loss / 学習Loss出力Epoch周期設定。(stepsと同時設定する場合、stepsの設定が優先)",
+    )
     return parser
 
 
 if __name__ == "__main__":
     parser = setup_parser()
-
     args = parser.parse_args()
     args = train_util.read_config_from_file(args, parser)
 

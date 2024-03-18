@@ -4506,12 +4506,12 @@ def sample_images_common(
         for i, prompt in enumerate(prompts):
             if not accelerator.is_main_process:
                 continue
-
+            print(prompt)
             if isinstance(prompt, dict):
                 negative_prompt = prompt.get("negative_prompt")
                 sample_steps = prompt.get("sample_steps", 30)
-                width = prompt.get("width", 512)
-                height = prompt.get("height", 512)
+                width = prompt.get("width", 1152)
+                height = prompt.get("height", 576)
                 scale = prompt.get("scale", 7.5)
                 seed = prompt.get("seed")
                 controlnet_image = prompt.get("controlnet_image")
@@ -4526,7 +4526,8 @@ def sample_images_common(
                 prompt = prompt_args[0]
                 negative_prompt = None
                 sample_steps = 30
-                width = height = 512
+                width = 1152
+                height = 576
                 scale = 7.5
                 seed = None
                 controlnet_image = None
